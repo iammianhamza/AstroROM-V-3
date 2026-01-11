@@ -2,7 +2,7 @@ name: Build ROM for y2q Device
 
 on:
   workflow_dispatch:
-    inputs:
+    inputs: 
       device:
         description: 'Device codename'
         required: false
@@ -29,12 +29,10 @@ jobs:
         run: chmod +x build.sh
           
       - name: Build ROM using build.sh
-        run: |
-          export device="${{ github.event.inputs.device || 'y2q' }}"
-          ./build.sh
+        run: ./build.sh --build "${{ github.event.inputs.device || 'y2q' }}"
         timeout-minutes: 480
         
-      - name: Collect build artifacts
+      - name:  Collect build artifacts
         if: success()
         run: |
           BUILD_DATE=$(date +%Y%m%d_%H%M%S)
@@ -59,6 +57,6 @@ jobs:
       - name: Build failed notification
         if: failure()
         run: |
-          echo "❌ Build for ${{ github.event.inputs.device || 'y2q' }} device failed!"
+          echo "❌ Build for ${{ github.event.inputs. device || 'y2q' }} device failed!"
           echo "Check the logs above for more details"
           exit 1
