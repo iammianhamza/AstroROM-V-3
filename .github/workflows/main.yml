@@ -1,0 +1,107 @@
+name: Build ROM for y2q Device
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_variant:
+        description: 'Build variant (user/userdebug/eng)'
+        required: false
+        default: 'userdebug'
+      lunch_combo:
+        description: 'Lunch combo for y2q'
+        required: false
+        default: 'AstroROM_y2q-userdebug'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git \
+            curl \
+            wget \
+            gnupg \
+            flex \
+            bison \
+            gperf \
+            build-essential \
+            zip \
+            zlib1g-dev \
+            libc6-dev \
+            libncurses5-dev \
+            x11-utils \
+            libx11-dev \
+            libreadline-dev \
+            libgl1-mesa-dev \
+            tofrodos \
+            python-is-python3 \
+            libxml2-utils \
+            xsltproc \
+            rsync \
+            ccache \
+            git-lfs
+            
+      - name: Initialize build environment
+        run: |
+          source build/envsetup.sh
+          
+      - name: Lunch y2q variant
+        run: |
+          source build/envsetup.sh
+          lunch ${{ github.event.inputs.lunch_combo || 'AstroROM_y2q-userdebug' }}
+          
+      - name: Build ROM
+        run: |
+          source build/envsetup.sh
+          lunch ${{ github.event.inputs.lunch_combo || 'AstroROM_y2q-userdebug' }}
+          m bacon -j$(nproc --all)
+        timeout-minutes: 480
+        
+      - name: Collect build artifacts
+        if: success()
+        run: |
+          BUILD_DATE=$(date +%Y%m%d_%H%M%S)
+          mkdir -p rom_artifacts
+          if [ -f out/target/product/y2q/*.zip ]; then
+            cp out/target/product/y2q/*.zip rom_artifacts/
+            echo "Build artifacts collected successfully"
+          else
+            echo "No ROM artifacts found"
+            exit 1
+          fi
+          
+      - name: Upload artifacts to release
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstroROM-y2q-${{ github.run_id }}
+          path: rom_artifacts/
+          retention-days: 30
+          
+      - name: Build failed notification
+        if: failure()
+        run: |
+          echo "Build for y2q device failed!"
+          echo "Check the logs above for more details"
+          exit 1
+
+  notify:
+    needs: build
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Build summary
+        run: |
+          if [ "${{ needs.build.result }}" == "success" ]; then
+            echo "✅ ROM build for y2q completed successfully!"
+          else
+            echo "❌ ROM build for y2q failed!"
+          fi
