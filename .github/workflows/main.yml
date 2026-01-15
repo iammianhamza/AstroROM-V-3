@@ -101,9 +101,6 @@ jobs:
       - name: Build ROM using build.sh
         run: ./build.sh --build "${{ github.event.inputs.device || 'y2q' }}"
         timeout-minutes: 480
-        env:
-          FIRMWARE_DOWNLOAD_MAX_RETRIES: 3
-          FIRMWARE_DOWNLOAD_RETRY_DELAY: 30
         
       - name:  Collect build artifacts
         if: success()
