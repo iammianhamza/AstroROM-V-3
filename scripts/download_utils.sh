@@ -29,14 +29,13 @@ _VALIDATE_DOWNLOAD_PREREQUISITES() {
         errors+=("Node.js is not installed or not in PATH")
     fi
     
-    # Check if samfirm.js exists
-    if [[ ! -f "$BIN/samfirm/samfirm.js" ]]; then
-        errors+=("samfirm.js not found at $BIN/samfirm/samfirm.js")
-    fi
-    
-    # Check if samfirm.js is readable
-    if [[ -f "$BIN/samfirm/samfirm.js" ]] && [[ ! -r "$BIN/samfirm/samfirm.js" ]]; then
-        errors+=("samfirm.js exists but is not readable")
+    # Check if samfirm.js exists and is readable (combined check)
+    if [[ ! -r "$BIN/samfirm/samfirm.js" ]]; then
+        if [[ ! -f "$BIN/samfirm/samfirm.js" ]]; then
+            errors+=("samfirm.js not found at $BIN/samfirm/samfirm.js")
+        else
+            errors+=("samfirm.js exists but is not readable")
+        fi
     fi
     
     # Report all errors if any
@@ -60,35 +59,36 @@ _ANALYZE_SAMFIRM_ERROR() {
         return
     fi
     
+    # Read only the last 100 lines to avoid memory issues with large files
     local error_content
-    error_content=$(cat "$error_log" 2>/dev/null)
+    error_content=$(tail -n 100 "$error_log" 2>/dev/null)
     
-    # Analyze common error patterns
-    if echo "$error_content" | grep -qi "ENOTFOUND\|ECONNREFUSED\|ETIMEDOUT\|EAI_AGAIN"; then
+    # Analyze common error patterns with a single grep call using extended regex
+    if echo "$error_content" | grep -qiE 'ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN'; then
         suggestions+=("Network connectivity issues - check your internet connection")
     fi
     
-    if echo "$error_content" | grep -qi "getaddrinfo\|DNS"; then
+    if echo "$error_content" | grep -qiE 'getaddrinfo|DNS'; then
         suggestions+=("DNS resolution failed - check your DNS settings")
     fi
     
-    if echo "$error_content" | grep -qi "404\|not found"; then
+    if echo "$error_content" | grep -qiE '404|not found'; then
         suggestions+=("Invalid model/region combination - verify MODEL and CSC values")
     fi
     
-    if echo "$error_content" | grep -qi "503\|502\|500"; then
+    if echo "$error_content" | grep -qiE '503|502|500'; then
         suggestions+=("Samsung server temporarily unavailable - try again later")
     fi
     
-    if echo "$error_content" | grep -qi "rate limit\|too many requests"; then
+    if echo "$error_content" | grep -qiE 'rate limit|too many requests'; then
         suggestions+=("Rate limiting from Samsung servers - wait before retrying")
     fi
     
-    if echo "$error_content" | grep -qi "Cannot read property\|TypeError\|undefined"; then
+    if echo "$error_content" | grep -qiE 'Cannot read property|TypeError|undefined'; then
         suggestions+=("samfirm.js internal error - check if node_modules are installed")
     fi
     
-    if echo "$error_content" | grep -qi "EACCES\|permission denied"; then
+    if echo "$error_content" | grep -qiE 'EACCES|permission denied'; then
         suggestions+=("Permission denied - check file/directory permissions")
     fi
     
