@@ -228,15 +228,16 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     
     # Create temporary log file for capturing samfirm output
     local samfirm_log
-    samfirm_log=$(mktemp "/tmp/samfirm_log_XXXXXXXXXX.log")
+    samfirm_log=$(mktemp -t "samfirm_log_XXXXXXXXXX.log")
     
     # Build and log the exact command
     local samfirm_cmd="node $BIN/samfirm/samfirm.js -m $mod -r $reg -i $imei"
     LOG_INFO "Executing: $samfirm_cmd"
     
-    # Execute samfirm with output capture
+    # Execute samfirm with output capture (preserve exit code with set -o pipefail)
     local exit_code=0
     (
+      set -o pipefail
       cd "$tmp" 
       node "$BIN/samfirm/samfirm.js" -m "$mod" -r "$reg" -i "$imei" 2>&1 | tee "$samfirm_log"
     ) || exit_code=$?
@@ -252,20 +253,15 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
         
         # Display error output if available
         if [[ -f "$samfirm_log" && -s "$samfirm_log" ]]; then
-            local log_size
-            log_size=$(wc -l < "$samfirm_log" 2>/dev/null || echo "0")
+            LOG_WARN "samfirm.js output (last 30 lines):"
+            echo "----------------------------------------"
+            tail -n 30 "$samfirm_log" | sed 's/^/  /'
+            echo "----------------------------------------"
             
-            if [[ $log_size -gt 0 ]]; then
-                LOG_WARN "samfirm.js output (last 30 lines):"
-                echo "----------------------------------------"
-                tail -n 30 "$samfirm_log" | sed 's/^/  /'
-                echo "----------------------------------------"
-                
-                # Analyze errors and provide suggestions
-                _ANALYZE_SAMFIRM_ERROR "$samfirm_log"
-            else
-                LOG_WARN "No output captured from samfirm.js"
-            fi
+            # Analyze errors and provide suggestions
+            _ANALYZE_SAMFIRM_ERROR "$samfirm_log"
+        else
+            LOG_WARN "No output captured from samfirm.js"
         fi
         
         RETRY_COUNT=$((RETRY_COUNT + 1))
@@ -297,17 +293,10 @@ fi
     # Log file information
     if [[ -f "$new_ap" ]]; then
         local file_size file_size_mb
-        # Portable way to get file size
-        if command -v stat >/dev/null 2>&1; then
-            # Try GNU stat first, then BSD stat
-            if stat -c%s "$new_ap" >/dev/null 2>&1; then
-                file_size=$(stat -c%s "$new_ap")
-            elif stat -f%z "$new_ap" >/dev/null 2>&1; then
-                file_size=$(stat -f%z "$new_ap")
-            fi
-        fi
+        # Portable way to get file size - try GNU format first, then BSD
+        file_size=$(stat -c%s "$new_ap" 2>/dev/null || stat -f%z "$new_ap" 2>/dev/null)
         
-        if [[ -n "$file_size" ]]; then
+        if [[ -n "$file_size" && "$file_size" -gt 0 ]]; then
             file_size_mb=$((file_size / 1024 / 1024))
             LOG_INFO "Downloaded AP file: $(basename "$new_ap") (${file_size_mb}MB)"
         else
