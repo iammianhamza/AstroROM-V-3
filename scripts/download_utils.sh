@@ -1,4 +1,4 @@
-##!/usr/bin/env bash
+#!/usr/bin/env bash
 #
 #  Copyright (c) 2025 Sameer Al Sahab
 #  Licensed under the MIT License. See LICENSE file for details.
@@ -18,6 +18,88 @@
 
 FW_DIR="${ASTROROM}/firmware"
 FW_BASE="${FW_DIR}/downloaded"
+
+
+# Validate prerequisites for firmware download
+_VALIDATE_DOWNLOAD_PREREQUISITES() {
+    local errors=()
+    
+    # Check if Node.js is installed
+    if ! command -v node >/dev/null 2>&1; then
+        errors+=("Node.js is not installed or not in PATH")
+    fi
+    
+    # Check if samfirm.js exists and is readable (combined check)
+    if [[ ! -r "$BIN/samfirm/samfirm.js" ]]; then
+        if [[ ! -f "$BIN/samfirm/samfirm.js" ]]; then
+            errors+=("samfirm.js not found at $BIN/samfirm/samfirm.js")
+        else
+            errors+=("samfirm.js exists but is not readable")
+        fi
+    fi
+    
+    # Report all errors if any
+    if [[ ${#errors[@]} -gt 0 ]]; then
+        LOG_WARN "Prerequisites validation failed:"
+        for err in "${errors[@]}"; do
+            echo "  - $err"
+        done
+        return 1
+    fi
+    
+    return 0
+}
+
+# Analyze samfirm error output and provide helpful suggestions
+_ANALYZE_SAMFIRM_ERROR() {
+    local error_log="$1"
+    local suggestions=()
+    
+    if [[ ! -f "$error_log" ]]; then
+        return
+    fi
+    
+    # Read only the last 100 lines to avoid memory issues with large files
+    local error_content
+    error_content=$(tail -n 100 "$error_log" 2>/dev/null)
+    
+    # Analyze common error patterns with a single grep call using extended regex
+    if echo "$error_content" | grep -qiE 'ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN'; then
+        suggestions+=("Network connectivity issues - check your internet connection")
+    fi
+    
+    if echo "$error_content" | grep -qiE 'getaddrinfo|DNS'; then
+        suggestions+=("DNS resolution failed - check your DNS settings")
+    fi
+    
+    if echo "$error_content" | grep -qiE '404|not found'; then
+        suggestions+=("Invalid model/region combination - verify MODEL and CSC values")
+    fi
+    
+    if echo "$error_content" | grep -qiE '503|502|500'; then
+        suggestions+=("Samsung server temporarily unavailable - try again later")
+    fi
+    
+    if echo "$error_content" | grep -qiE 'rate limit|too many requests'; then
+        suggestions+=("Rate limiting from Samsung servers - wait before retrying")
+    fi
+    
+    if echo "$error_content" | grep -qiE 'Cannot read property|TypeError|undefined'; then
+        suggestions+=("samfirm.js internal error - check if node_modules are installed")
+    fi
+    
+    if echo "$error_content" | grep -qiE 'EACCES|permission denied'; then
+        suggestions+=("Permission denied - check file/directory permissions")
+    fi
+    
+    # Display suggestions if any were found
+    if [[ ${#suggestions[@]} -gt 0 ]]; then
+        LOG_WARN "Possible causes:"
+        for suggestion in "${suggestions[@]}"; do
+            echo "  - $suggestion"
+        done
+    fi
+}
 
 
 DOWNLOAD_FW() {
@@ -123,7 +205,14 @@ FETCH_FW() {
 
     mkdir -p "$target"
     
+    # Validate prerequisites before attempting download
+    LOG_INFO "Validating download prerequisites..."
+    if ! _VALIDATE_DOWNLOAD_PREREQUISITES; then
+        ERROR_EXIT "Prerequisites validation failed. Cannot proceed with firmware download."
+    fi
+    
 LOG_INFO "Downloading firmware $ver_simple..."
+LOG_INFO "Request details: Model=$mod, Region=$reg, IMEI=$imei"
 
 # Retry configuration - use environment variables or defaults
 MAX_RETRIES="${FIRMWARE_DOWNLOAD_MAX_RETRIES:-3}"
@@ -137,35 +226,89 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     # Clean up and prepare temporary directory
     rm -rf "$tmp" && mkdir -p "$tmp"
     
-    (
-      cd "$tmp" 
-      "$BIN/samfirm/samfirm.js" -m "$mod" -r "$reg" -i "$imei"
-    )
+    # Create temporary log file for capturing samfirm output
+    local samfirm_log
+    samfirm_log=$(mktemp -t "samfirm_log_XXXXXXXXXX.log")
     
-    if [[ $? -eq 0 ]]; then
+    # Build and log the exact command
+    local samfirm_cmd="node $BIN/samfirm/samfirm.js -m $mod -r $reg -i $imei"
+    LOG_INFO "Executing: $samfirm_cmd"
+    
+    # Execute samfirm with output capture (preserve exit code with set -o pipefail)
+    local exit_code=0
+    (
+      set -o pipefail
+      cd "$tmp" 
+      node "$BIN/samfirm/samfirm.js" -m "$mod" -r "$reg" -i "$imei" 2>&1 | tee "$samfirm_log"
+    ) || exit_code=$?
+    
+    if [[ $exit_code -eq 0 ]]; then
         DOWNLOAD_SUCCESS=true
         LOG_INFO "Download successful on attempt $((RETRY_COUNT + 1))"
+        # Clean up log file on success
+        rm -f "$samfirm_log"
         break
     else
+        LOG_WARN "samfirm.js failed with exit code $exit_code"
+        
+        # Display error output if available
+        if [[ -f "$samfirm_log" && -s "$samfirm_log" ]]; then
+            LOG_WARN "samfirm.js output (last 30 lines):"
+            echo "----------------------------------------"
+            tail -n 30 "$samfirm_log" | sed 's/^/  /'
+            echo "----------------------------------------"
+            
+            # Analyze errors and provide suggestions
+            _ANALYZE_SAMFIRM_ERROR "$samfirm_log"
+        else
+            LOG_WARN "No output captured from samfirm.js"
+        fi
+        
         RETRY_COUNT=$((RETRY_COUNT + 1))
         if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
             # Exponential backoff: 30s, 60s, 120s (if using default RETRY_DELAY=30)
             WAIT_TIME=$((RETRY_DELAY * (2 ** (RETRY_COUNT - 1))))
-            LOG_WARN "Download failed. Retrying in ${WAIT_TIME}s... (Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+            LOG_WARN "Retrying in ${WAIT_TIME}s... (Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
             # Clean up failed download before retry
             rm -rf "$tmp"
             sleep $WAIT_TIME
         fi
+        
+        # Clean up log file before retry or final failure
+        rm -f "$samfirm_log"
     fi
 done
 
 if [[ "$DOWNLOAD_SUCCESS" != true ]]; then
-    ERROR_EXIT "Failed to download the firmware for $mod ($reg) after $MAX_RETRIES attempts"
+    LOG_WARN "All download attempts failed for $mod ($reg)"
+    LOG_WARN "Command that was attempted: node $BIN/samfirm/samfirm.js -m $mod -r $reg -i $imei"
+    ERROR_EXIT "Failed to download the firmware for $mod ($reg) after $MAX_RETRIES attempts. Check the error messages above for details."
 fi
 
     local new_ap=$(ls "$fw_out"/AP_*.tar.md5 2>/dev/null | head -1)
     if [[ -z "$new_ap" ]]; then
         ERROR_EXIT "Download completed but AP file not found in $fw_out"
+    fi
+    
+    # Log file information
+    if [[ -f "$new_ap" ]]; then
+        local file_size file_size_mb
+        # Portable way to get file size - try GNU format first, then BSD
+        file_size=$(stat -c%s "$new_ap" 2>/dev/null || stat -f%z "$new_ap" 2>/dev/null)
+        
+        if [[ -n "$file_size" && "$file_size" -gt 0 ]]; then
+            file_size_mb=$((file_size / 1024 / 1024))
+            LOG_INFO "Downloaded AP file: $(basename "$new_ap") (${file_size_mb}MB)"
+        else
+            LOG_INFO "Downloaded AP file: $(basename "$new_ap")"
+        fi
+        
+        # Calculate and log MD5 checksum if md5sum is available
+        if command -v md5sum >/dev/null 2>&1; then
+            local md5hash
+            md5hash=$(md5sum "$new_ap" | awk '{print $1}')
+            LOG_INFO "MD5 checksum: $md5hash"
+        fi
     fi
 
     if ! _VALIDATE_AP_FILE "$new_ap"; then
