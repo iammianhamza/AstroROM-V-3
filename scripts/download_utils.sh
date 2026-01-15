@@ -228,10 +228,10 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     
     # Create temporary log file for capturing samfirm output
     local samfirm_log
-    samfirm_log=$(mktemp "/tmp/samfirm_${mod}_${reg}_XXXX.log")
+    samfirm_log=$(mktemp "/tmp/samfirm_log_XXXXXXXXXX.log")
     
     # Build and log the exact command
-    local samfirm_cmd="$BIN/samfirm/samfirm.js -m $mod -r $reg -i $imei"
+    local samfirm_cmd="node $BIN/samfirm/samfirm.js -m $mod -r $reg -i $imei"
     LOG_INFO "Executing: $samfirm_cmd"
     
     # Execute samfirm with output capture
@@ -296,10 +296,23 @@ fi
     
     # Log file information
     if [[ -f "$new_ap" ]]; then
-        local file_size
-        file_size=$(stat -f%z "$new_ap" 2>/dev/null || stat -c%s "$new_ap" 2>/dev/null)
-        local file_size_mb=$((file_size / 1024 / 1024))
-        LOG_INFO "Downloaded AP file: $(basename "$new_ap") (${file_size_mb}MB)"
+        local file_size file_size_mb
+        # Portable way to get file size
+        if command -v stat >/dev/null 2>&1; then
+            # Try GNU stat first, then BSD stat
+            if stat -c%s "$new_ap" >/dev/null 2>&1; then
+                file_size=$(stat -c%s "$new_ap")
+            elif stat -f%z "$new_ap" >/dev/null 2>&1; then
+                file_size=$(stat -f%z "$new_ap")
+            fi
+        fi
+        
+        if [[ -n "$file_size" ]]; then
+            file_size_mb=$((file_size / 1024 / 1024))
+            LOG_INFO "Downloaded AP file: $(basename "$new_ap") (${file_size_mb}MB)"
+        else
+            LOG_INFO "Downloaded AP file: $(basename "$new_ap")"
+        fi
         
         # Calculate and log MD5 checksum if md5sum is available
         if command -v md5sum >/dev/null 2>&1; then
