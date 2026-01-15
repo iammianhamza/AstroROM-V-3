@@ -16,6 +16,19 @@
 #
 
 
+# Helper function to get available disk space in GB
+# Usage: get_available_space_gb [path]
+# Returns: Available space in GB for the given path (or root if not specified)
+get_available_space_gb() {
+    local check_path="${1:-/}"
+    local available_kb
+    available_kb=$(df --output=avail "$check_path" 2>/dev/null | tail -1)
+    if [[ -z "$available_kb" ]]; then
+        available_kb=$(df --output=avail / | tail -1)
+    fi
+    echo $((available_kb / 1024 / 1024))
+}
+
 
 EXTRACT_ROM() {
     mkdir -p "$WORKDIR"
@@ -63,12 +76,8 @@ EXTRACT_FIRMWARE() {
     LOG "Checking $fw_type firmware.."
     
     # Check disk space before starting extraction
-    local available_kb
-    available_kb=$(df --output=avail "$WORKDIR" 2>/dev/null | tail -1)
-    if [[ -z "$available_kb" ]]; then
-        available_kb=$(df --output=avail / | tail -1)
-    fi
-    local available_gb=$((available_kb / 1024 / 1024))
+    local available_gb
+    available_gb=$(get_available_space_gb "$WORKDIR")
     
     LOG_INFO "Starting firmware extraction with ${available_gb}GB available"
     
@@ -114,12 +123,8 @@ EXTRACT_FIRMWARE() {
         rm -f "$UNPACK_CONF" "${work_model}/.extraction_complete"
         
         # Check disk space on failure
-        local available_kb_fail
-        available_kb_fail=$(df --output=avail "$WORKDIR" 2>/dev/null | tail -1)
-        if [[ -z "$available_kb_fail" ]]; then
-            available_kb_fail=$(df --output=avail / | tail -1)
-        fi
-        local available_gb_fail=$((available_kb_fail / 1024 / 1024))
+        local available_gb_fail
+        available_gb_fail=$(get_available_space_gb "$WORKDIR")
         
         ERROR_EXIT "Failed to extract super.img from $ap_file (Available space: ${available_gb_fail}GB)"
         return 1
@@ -137,12 +142,8 @@ EXTRACT_FIRMWARE() {
         fi
         
         # Check disk space after cleanup
-        local available_kb_after_cleanup
-        available_kb_after_cleanup=$(df --output=avail "$WORKDIR" 2>/dev/null | tail -1)
-        if [[ -z "$available_kb_after_cleanup" ]]; then
-            available_kb_after_cleanup=$(df --output=avail / | tail -1)
-        fi
-        local available_gb_after_cleanup=$((available_kb_after_cleanup / 1024 / 1024))
+        local available_gb_after_cleanup
+        available_gb_after_cleanup=$(get_available_space_gb "$WORKDIR")
         LOG_INFO "Disk space after AP cleanup: ${available_gb_after_cleanup}GB"
     fi
 
@@ -160,7 +161,8 @@ EXTRACT_FIRMWARE() {
         RUN_CMD "Converting sparse image" \
             "\"$BIN/android-tools/simg2img\" \"$super_img\" \"$super_raw\" >/dev/null" || {
             rm -f "$UNPACK_CONF" "${work_model}/.extraction_complete"
-            rm -f "$super_img" "$super_raw"
+            rm -f "$super_img"
+            [[ -f "$super_raw" ]] && rm -f "$super_raw"
             ERROR_EXIT "sparse image to raw conversion failed"
         }
         rm -f "$super_img"
@@ -269,12 +271,8 @@ if [[ -n "${SUDO_USER:-}" ]]; then
 fi
 
     # Final disk space check
-    local available_kb_final
-    available_kb_final=$(df --output=avail "$WORKDIR" 2>/dev/null | tail -1)
-    if [[ -z "$available_kb_final" ]]; then
-        available_kb_final=$(df --output=avail / | tail -1)
-    fi
-    local available_gb_final=$((available_kb_final / 1024 / 1024))
+    local available_gb_final
+    available_gb_final=$(get_available_space_gb "$WORKDIR")
     
     LOG_END "Unpacked $model firmware. ( Got $found_count partitions) - ${available_gb_final}GB remaining"
 
