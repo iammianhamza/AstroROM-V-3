@@ -20,11 +20,21 @@ INIT_BUILD_ENV() {
 
     CHECK_PRIVILEGES
     
+    # Check disk space before firmware extraction
+    if command -v CHECK_DISK_SPACE &>/dev/null; then
+        CHECK_DISK_SPACE "before-firmware-extraction"
+    fi
+    
     MAIN_WORKDIR="${WORKDIR}/${MODEL}"
     STOCK_WORKDIR="${WORKDIR}/${STOCK_MODEL:-$MODEL}"
     EXTRA_WORKDIR="${WORKDIR}/${EXTRA_MODEL}"
 
     EXTRACT_ROM || ERROR_EXIT "Firmware extraction failed."
+    
+    # Check disk space after firmware extraction
+    if command -v CHECK_DISK_SPACE &>/dev/null; then
+        CHECK_DISK_SPACE "after-firmware-extraction"
+    fi
 
     LOG_BEGIN "Creating final workspace"
     CREATE_WORKSPACE

@@ -61,6 +61,20 @@ EXTRACT_FIRMWARE() {
 
 
     LOG "Checking $fw_type firmware.."
+    
+    # Check disk space before starting extraction
+    local available_kb
+    available_kb=$(df --output=avail "$WORKDIR" 2>/dev/null | tail -1)
+    if [[ -z "$available_kb" ]]; then
+        available_kb=$(df --output=avail / | tail -1)
+    fi
+    local available_gb=$((available_kb / 1024 / 1024))
+    
+    LOG_INFO "Starting firmware extraction with ${available_gb}GB available"
+    
+    if [ "$available_gb" -lt 3 ]; then
+        ERROR_EXIT "Insufficient disk space for firmware extraction: ${available_gb}GB available. At least 3GB required."
+    fi
 
     mkdir -p "$work_model"
 
@@ -96,17 +110,41 @@ EXTRACT_FIRMWARE() {
 
     local super_img="${work_model}/super.img"
 
-    FETCH_FILE "$ap_file" "super.img" "$work_model" >/dev/null || {
+    if ! FETCH_FILE "$ap_file" "super.img" "$work_model" >/dev/null; then
         rm -f "$UNPACK_CONF" "${work_model}/.extraction_complete"
-        ERROR_EXIT "Failed to extract super.img from $ap_file"
+        
+        # Check disk space on failure
+        local available_kb_fail
+        available_kb_fail=$(df --output=avail "$WORKDIR" 2>/dev/null | tail -1)
+        if [[ -z "$available_kb_fail" ]]; then
+            available_kb_fail=$(df --output=avail / | tail -1)
+        fi
+        local available_gb_fail=$((available_kb_fail / 1024 / 1024))
+        
+        ERROR_EXIT "Failed to extract super.img from $ap_file (Available space: ${available_gb_fail}GB)"
         return 1
-    }
+    fi
 
     # Free space ASAP on GitHub Actions
-        if IS_GITHUB_ACTIONS; then
-            rm -f "$ap_file"
+    if IS_GITHUB_ACTIONS; then
+        LOG_INFO "Cleaning up AP file to free disk space..."
+        rm -f "$ap_file"
+        
+        # Also remove the entire downloaded firmware directory to free more space
+        if [[ -d "$odin_dir" ]]; then
             rm -rf "$odin_dir"
+            LOG_INFO "Removed firmware download directory to free space"
         fi
+        
+        # Check disk space after cleanup
+        local available_kb_after_cleanup
+        available_kb_after_cleanup=$(df --output=avail "$WORKDIR" 2>/dev/null | tail -1)
+        if [[ -z "$available_kb_after_cleanup" ]]; then
+            available_kb_after_cleanup=$(df --output=avail / | tail -1)
+        fi
+        local available_gb_after_cleanup=$((available_kb_after_cleanup / 1024 / 1024))
+        LOG_INFO "Disk space after AP cleanup: ${available_gb_after_cleanup}GB"
+    fi
 
 
     [[ ! -f "$super_img" ]] && {
@@ -117,10 +155,12 @@ EXTRACT_FIRMWARE() {
 
     # https://source.android.com/docs/core/ota/sparse_images
     if file "$super_img" | grep -q "sparse"; then
+        LOG_INFO "Converting sparse image to raw..."
         local super_raw="${work_model}/super.raw"
         RUN_CMD "Converting sparse image" \
             "\"$BIN/android-tools/simg2img\" \"$super_img\" \"$super_raw\" >/dev/null" || {
             rm -f "$UNPACK_CONF" "${work_model}/.extraction_complete"
+            rm -f "$super_img" "$super_raw"
             ERROR_EXIT "sparse image to raw conversion failed"
         }
         rm -f "$super_img"
@@ -129,9 +169,11 @@ EXTRACT_FIRMWARE() {
 
     #https://source.android.com/docs/core/ota/dynamic_partitions
     if [[ ! -f "$UNPACK_CONF" ]]; then
+        LOG_INFO "Generating super metadata..."
         local lpdump_output
         lpdump_output=$("$BIN/android-tools/lpdump" "$super_img" 2>&1) || {
             rm -f "$UNPACK_CONF" "${work_model}/.extraction_complete"
+            rm -f "$super_img"
             ERROR_EXIT "Failed to generate super metadata for $model"
         }
 
@@ -160,21 +202,26 @@ PARTITIONS=""
 FILESYSTEM="$fstype"
 EOF
         else
+            rm -f "$super_img"
             ERROR_EXIT "Incomplete super metadata for $model"
         fi
     fi
 
 
+LOG_INFO "Extracting partitions from super.img..."
 RUN_CMD "Extracting partitions" \
     "\"$BIN/android-tools/lpunpack\" \"$super_img\" \"$work_model/\"" || {
         rm -f "$UNPACK_CONF" "${work_model}/.extraction_complete"
+        rm -f "$super_img"
         ERROR_EXIT "Failed to extract partitions from $model"
     }
 
 LOG_END "Partitions unpacked"
 
 
+    # Clean up super.img immediately to free space
     rm -f "$super_img"
+    LOG_INFO "Removed super.img to free disk space"
 
     local found_count=0
     for part in "${target_partitions[@]}"; do
@@ -189,10 +236,14 @@ LOG_END "Partitions unpacked"
 
                 UNPACK_PARTITION "$dst_img" "$model" || {
                     rm -f "$UNPACK_CONF" "${work_model}/.extraction_complete"
+                    # Clean up on failure
+                    rm -f "$dst_img"
                     return 1
                 }
 
+                # Clean up partition image immediately after unpacking
                 rm -f "$dst_img"
+                LOG_INFO "Removed ${part}.img after unpacking to free space"
                 ((found_count++))
                 break
             fi
@@ -217,7 +268,15 @@ if [[ -n "${SUDO_USER:-}" ]]; then
     chmod -R 755 "$WORKDIR"
 fi
 
-    LOG_END "Unpacked $model firmware. ( Got $found_count partitions)"
+    # Final disk space check
+    local available_kb_final
+    available_kb_final=$(df --output=avail "$WORKDIR" 2>/dev/null | tail -1)
+    if [[ -z "$available_kb_final" ]]; then
+        available_kb_final=$(df --output=avail / | tail -1)
+    fi
+    local available_gb_final=$((available_kb_final / 1024 / 1024))
+    
+    LOG_END "Unpacked $model firmware. ( Got $found_count partitions) - ${available_gb_final}GB remaining"
 
     return 0
 }

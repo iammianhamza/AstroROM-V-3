@@ -57,6 +57,33 @@ for util in "$ASTROROM"/scripts/*.sh; do
 done
 
 
+# Disk space management function
+CHECK_DISK_SPACE() {
+    local context="${1:-general}"
+    local warn_threshold_gb=5
+    local critical_threshold_gb=2
+    local abort_threshold_gb=1
+    
+    # Get available space in GB
+    local available_kb
+    available_kb=$(df --output=avail / | tail -1)
+    local available_gb=$((available_kb / 1024 / 1024))
+    
+    LOG_INFO "Disk space check [$context]: ${available_gb}GB available"
+    
+    # Check thresholds
+    if [ "$available_gb" -lt "$abort_threshold_gb" ]; then
+        ERROR_EXIT "Critical: Insufficient disk space (${available_gb}GB). Build aborted. Minimum ${abort_threshold_gb}GB required."
+    elif [ "$available_gb" -lt "$critical_threshold_gb" ]; then
+        LOG_WARN "Critical: Low disk space (${available_gb}GB). Build may fail. Recommended: ${critical_threshold_gb}GB+"
+    elif [ "$available_gb" -lt "$warn_threshold_gb" ]; then
+        LOG_WARN "Warning: Disk space is low (${available_gb}GB). Recommended: ${warn_threshold_gb}GB+"
+    fi
+    
+    return 0
+}
+
+
 EXEC_SCRIPT() {
     local script_file="$1"
     local marker="$2"
@@ -96,6 +123,9 @@ _BUILD_WORKFLOW() {
 
     CHECK_ALL_DEPENDENCIES
     chmod +x -R "$BIN"
+    
+    # Check disk space at start
+    CHECK_DISK_SPACE "build-start"
 
     if [[ -z "$device" ]]; then
         [[ ! -d "$OBJECTIVES_DIR" ]] && \
@@ -182,6 +212,10 @@ fi
 
 
     _APKTOOL_PATCH || ERROR_EXIT "APK/JAR patching failed"
+    
+    # Check disk space before repacking
+    CHECK_DISK_SPACE "before-repacking"
+    
     REPACK_ROM "$FILESYSTEM" || ERROR_EXIT "Repack failed"
 
     rm -rf "$WORKSPACE"

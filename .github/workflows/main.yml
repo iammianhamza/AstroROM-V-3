@@ -15,6 +15,63 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Check initial disk space
+        run: |
+          echo "=== Initial Disk Space ==="
+          df -h
+          echo "=========================="
+          AVAILABLE_GB=$(df --output=avail / | tail -1 | awk '{print int($1/1024/1024)}')
+          echo "Available space: ${AVAILABLE_GB}GB"
+        
+      - name: Free up disk space
+        run: |
+          echo "=== Freeing up disk space ==="
+          
+          # Remove .NET SDK
+          if [ -d "/usr/share/dotnet" ]; then
+            echo "Removing .NET SDK..."
+            sudo rm -rf /usr/share/dotnet
+          fi
+          
+          # Remove GHC Haskell compiler
+          if [ -d "/opt/ghc" ]; then
+            echo "Removing GHC..."
+            sudo rm -rf /opt/ghc
+          fi
+          
+          # Remove Boost libraries
+          if [ -d "/usr/local/share/boost" ]; then
+            echo "Removing Boost..."
+            sudo rm -rf /usr/local/share/boost
+          fi
+          
+          # Remove Android SDK tools
+          if [ -n "$AGENT_TOOLSDIRECTORY" ] && [ -d "$AGENT_TOOLSDIRECTORY" ]; then
+            echo "Removing Android SDK tools..."
+            sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          fi
+          
+          # Clean up Docker images
+          echo "Cleaning Docker images..."
+          docker system prune -af || true
+          
+          # Clean up apt cache
+          sudo apt-get clean
+          
+          echo "=== Cleanup completed ==="
+      
+      - name: Verify disk space after cleanup
+        run: |
+          echo "=== Disk Space After Cleanup ==="
+          df -h
+          echo "================================"
+          AVAILABLE_GB=$(df --output=avail / | tail -1 | awk '{print int($1/1024/1024)}')
+          echo "Available space: ${AVAILABLE_GB}GB"
+          
+          if [ "$AVAILABLE_GB" -lt 10 ]; then
+            echo "::warning::Low disk space after cleanup: ${AVAILABLE_GB}GB"
+          fi
         
       - name: Set up build environment
         run: |
@@ -27,6 +84,19 @@ jobs:
             
       - name: Make build script executable
         run: chmod +x build.sh
+      
+      - name: Check disk space before build
+        run: |
+          echo "=== Disk Space Before Build ==="
+          df -h
+          echo "================================"
+          AVAILABLE_GB=$(df --output=avail / | tail -1 | awk '{print int($1/1024/1024)}')
+          echo "Available space for build: ${AVAILABLE_GB}GB"
+          
+          if [ "$AVAILABLE_GB" -lt 5 ]; then
+            echo "::error::Insufficient disk space: ${AVAILABLE_GB}GB (minimum 5GB required)"
+            exit 1
+          fi
           
       - name: Build ROM using build.sh
         run: ./build.sh --build "${{ github.event.inputs.device || 'y2q' }}"
