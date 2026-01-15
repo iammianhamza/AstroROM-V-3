@@ -110,19 +110,20 @@ jobs:
           INITIAL_AVAILABLE_GB=$(df --output=avail / | tail -1 | awk '{print int($1/1024/1024)}')
           TOTAL_GB=$(df --output=size / | tail -1 | awk '{print int($1/1024/1024)}')
           USED_GB=$(df --output=used / | tail -1 | awk '{print int($1/1024/1024)}')
-          PERCENT_FREE=$(df --output=pcent / | tail -1 | tr -d ' %')
+          PERCENT_USED=$(df --output=pcent / | tail -1 | tr -d ' %')
           
           echo "Total space: ${TOTAL_GB}GB"
           echo "Used space: ${USED_GB}GB"
           echo "Available space: ${INITIAL_AVAILABLE_GB}GB"
-          echo "Percentage free: $((100 - PERCENT_FREE))%"
+          echo "Disk usage: ${PERCENT_USED}%"
+          echo "Disk free: $((100 - PERCENT_USED))%"
           
           # Note: We can't calculate space recovered without the initial value
           # But we show the current available space
           echo ""
           echo "=== Space Recovery Report ==="
           echo "Current available space: ${INITIAL_AVAILABLE_GB}GB"
-          echo "Disk usage: ${PERCENT_FREE}%"
+          echo "Disk usage: ${PERCENT_USED}%"
           echo "============================"
           
           if [ "$INITIAL_AVAILABLE_GB" -lt 10 ]; then
