@@ -2,30 +2,15 @@
 MODEL_NAME="Galaxy S20+ 5G"
 CODENAME="y2q"
 SIOP_POLICY_NAME=siop_y2q_sm8250
-VNDK="30"
 STOCK_MODEL="SM-G986N"
 STOCK_CSC="KOO"
 STOCK_IMEI="355995110205095"
-
-# The firmware to be used as source 
-# r9q is less bloated and similar structure as x1q
-MODEL="SM-G990B"
-CSC="EUX" 
+MODEL="SM-G998U1"
+CSC="ATT" 
 IMEI="353718681234563"
-
-# Extra firmware which is optional
-#EXTRA_MODEL=""
-#EXTRA_CSC=""
-#EXTRA_IMEI=""
-
-
-# External
+VNDK="30"
+platform=sd_8250
 FILESYSTEM=ext4
-# TODO: Add erofs on ramdisk beside kernel
-#FILESYSTEM="erofs"
-
-
-# Specs
 DEVICE_HAVE_SPEN_SUPPORT=false
 DEVICE_HAVE_QHD_PANEL=true
 DEVICE_HAVE_HIGH_REFRESH_RATE=true
