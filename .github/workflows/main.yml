@@ -22,16 +22,31 @@ jobs:
           df -h
           echo "=========================="
           AVAILABLE_GB=$(df --output=avail / | tail -1 | awk '{print int($1/1024/1024)}')
+          TOTAL_GB=$(df --output=size / | tail -1 | awk '{print int($1/1024/1024)}')
+          USED_GB=$(df --output=used / | tail -1 | awk '{print int($1/1024/1024)}')
+          echo "Total space: ${TOTAL_GB}GB"
+          echo "Used space: ${USED_GB}GB"
           echo "Available space: ${AVAILABLE_GB}GB"
         
       - name: Free up disk space
         run: |
           echo "=== Freeing up disk space ==="
           
+          # Remove unnecessary packages
+          sudo apt-get remove -y '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' '^php.*' '^mongodb-.*' '^mysql-.*' azure-cli google-chrome-stable firefox powershell mono-devel || true
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          
           # Remove .NET SDK
           if [ -d "/usr/share/dotnet" ]; then
             echo "Removing .NET SDK..."
             sudo rm -rf /usr/share/dotnet
+          fi
+          
+          # Remove Android SDK (only if not needed for ROM build)
+          if [ -d "/usr/local/lib/android" ]; then
+            echo "Removing Android SDK..."
+            sudo rm -rf /usr/local/lib/android
           fi
           
           # Remove GHC Haskell compiler
@@ -46,18 +61,42 @@ jobs:
             sudo rm -rf /usr/local/share/boost
           fi
           
+          # Remove CodeQL
+          if [ -d "/opt/hostedtoolcache/CodeQL" ]; then
+            echo "Removing CodeQL..."
+            sudo rm -rf /opt/hostedtoolcache/CodeQL
+          fi
+          
+          # Remove Node modules
+          if [ -d "/usr/local/lib/node_modules" ]; then
+            echo "Removing Node modules..."
+            sudo rm -rf /usr/local/lib/node_modules
+          fi
+          
+          # Remove JVM
+          if [ -d "/usr/lib/jvm" ]; then
+            echo "Removing JVM..."
+            sudo rm -rf /usr/lib/jvm
+          fi
+          
           # Remove Android SDK tools
           if [ -n "$AGENT_TOOLSDIRECTORY" ] && [ -d "$AGENT_TOOLSDIRECTORY" ]; then
             echo "Removing Android SDK tools..."
             sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           fi
           
-          # Clean up Docker images
-          echo "Cleaning Docker images..."
-          docker system prune -af || true
+          # Clean up Docker images and containers
+          echo "Cleaning Docker..."
+          docker system prune -af --volumes || true
+          docker rmi $(docker image ls -aq) 2>/dev/null || true
           
-          # Clean up apt cache
+          # Remove swap file
+          sudo swapoff -a 2>/dev/null || true
+          sudo rm -f /swapfile 2>/dev/null || true
+          
+          # Clean up apt cache and lists
           sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
           
           echo "=== Cleanup completed ==="
       
@@ -66,11 +105,28 @@ jobs:
           echo "=== Disk Space After Cleanup ==="
           df -h
           echo "================================"
-          AVAILABLE_GB=$(df --output=avail / | tail -1 | awk '{print int($1/1024/1024)}')
-          echo "Available space: ${AVAILABLE_GB}GB"
           
-          if [ "$AVAILABLE_GB" -lt 10 ]; then
-            echo "::warning::Low disk space after cleanup: ${AVAILABLE_GB}GB"
+          # Calculate space metrics
+          INITIAL_AVAILABLE_GB=$(df --output=avail / | tail -1 | awk '{print int($1/1024/1024)}')
+          TOTAL_GB=$(df --output=size / | tail -1 | awk '{print int($1/1024/1024)}')
+          USED_GB=$(df --output=used / | tail -1 | awk '{print int($1/1024/1024)}')
+          PERCENT_FREE=$(df --output=pcent / | tail -1 | tr -d ' %')
+          
+          echo "Total space: ${TOTAL_GB}GB"
+          echo "Used space: ${USED_GB}GB"
+          echo "Available space: ${INITIAL_AVAILABLE_GB}GB"
+          echo "Percentage free: $((100 - PERCENT_FREE))%"
+          
+          # Note: We can't calculate space recovered without the initial value
+          # But we show the current available space
+          echo ""
+          echo "=== Space Recovery Report ==="
+          echo "Current available space: ${INITIAL_AVAILABLE_GB}GB"
+          echo "Disk usage: ${PERCENT_FREE}%"
+          echo "============================"
+          
+          if [ "$INITIAL_AVAILABLE_GB" -lt 10 ]; then
+            echo "::warning::Low disk space after cleanup: ${INITIAL_AVAILABLE_GB}GB"
           fi
         
       - name: Set up build environment
@@ -93,9 +149,11 @@ jobs:
           AVAILABLE_GB=$(df --output=avail / | tail -1 | awk '{print int($1/1024/1024)}')
           echo "Available space for build: ${AVAILABLE_GB}GB"
           
-          if [ "$AVAILABLE_GB" -lt 5 ]; then
-            echo "::error::Insufficient disk space: ${AVAILABLE_GB}GB (minimum 5GB required)"
+          if [ "$AVAILABLE_GB" -lt 50 ]; then
+            echo "::error::Insufficient disk space: ${AVAILABLE_GB}GB (minimum 50GB required for ROM builds)"
             exit 1
+          elif [ "$AVAILABLE_GB" -lt 80 ]; then
+            echo "::warning::Limited disk space: ${AVAILABLE_GB}GB (recommended 80GB+ for optimal ROM builds)"
           fi
           
       - name: Build ROM using build.sh
