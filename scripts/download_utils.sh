@@ -124,16 +124,43 @@ FETCH_FW() {
     mkdir -p "$target"
     
 LOG_INFO "Downloading firmware $ver_simple..."
-rm -rf "$tmp" && mkdir -p "$tmp"
 
-(
-  cd "$tmp" 
-  "$BIN/samfirm/samfirm.js" -m "$mod" -r "$reg" -i "$imei"
-)
+# Retry configuration - use environment variables or defaults
+MAX_RETRIES="${FIRMWARE_DOWNLOAD_MAX_RETRIES:-3}"
+RETRY_DELAY="${FIRMWARE_DOWNLOAD_RETRY_DELAY:-30}"
+RETRY_COUNT=0
+DOWNLOAD_SUCCESS=false
 
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    LOG_INFO "Firmware download attempt $((RETRY_COUNT + 1))/$MAX_RETRIES for $mod ($reg)..."
+    
+    # Clean up and prepare temporary directory
+    rm -rf "$tmp" && mkdir -p "$tmp"
+    
+    (
+      cd "$tmp" 
+      "$BIN/samfirm/samfirm.js" -m "$mod" -r "$reg" -i "$imei"
+    )
+    
+    if [[ $? -eq 0 ]]; then
+        DOWNLOAD_SUCCESS=true
+        LOG_INFO "Download successful on attempt $((RETRY_COUNT + 1))"
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            # Exponential backoff: 30s, 60s, 120s (if using default RETRY_DELAY=30)
+            WAIT_TIME=$((RETRY_DELAY * (2 ** (RETRY_COUNT - 1))))
+            LOG_WARN "Download failed. Retrying in ${WAIT_TIME}s... (Attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+            # Clean up failed download before retry
+            rm -rf "$tmp"
+            sleep $WAIT_TIME
+        fi
+    fi
+done
 
-if [[ $? -ne 0 ]]; then
-    ERROR_EXIT "Failed to download the firmware for $mod ($reg)"
+if [[ "$DOWNLOAD_SUCCESS" != true ]]; then
+    ERROR_EXIT "Failed to download the firmware for $mod ($reg) after $MAX_RETRIES attempts"
 fi
 
     local new_ap=$(ls "$fw_out"/AP_*.tar.md5 2>/dev/null | head -1)
