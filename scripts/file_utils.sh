@@ -48,6 +48,19 @@ FETCH_FILE() {
     [[ -s "$out_path" ]] && return 0
 
     (( depth >= 5 )) && return 1
+    
+    # Check disk space before extraction (only at depth 0 to avoid repeated checks)
+    if [[ $depth -eq 0 ]]; then
+        local available_kb
+        available_kb=$(df --output=avail "$out_dir" | tail -1)
+        local available_gb=$((available_kb / 1024 / 1024))
+        
+        if [ "$available_gb" -lt 2 ]; then
+            ERROR_EXIT "Insufficient disk space for extraction: ${available_gb}GB available. At least 2GB required."
+        fi
+        
+        LOG_INFO "Starting extraction with ${available_gb}GB available"
+    fi
 
     if [[ -z "${IS_DEPS_OK:-}" ]]; then
         COMMAND_EXISTS 7z  || CHECK_DEPENDENCY p7zip-full "7zip" true
@@ -62,7 +75,19 @@ FETCH_FILE() {
 
     
     if echo "$file_list" | awk '{print $NF}' | grep -Fxq "$target_file"; then
-        7z x "$container" "$target_file" -so 2>/dev/null > "$out_path"
+        if ! 7z x "$container" "$target_file" -so 2>/dev/null > "$out_path"; then
+            rm -f "$out_path"
+            
+            # Check if it was a disk space issue
+            local available_kb_after
+            available_kb_after=$(df --output=avail "$out_dir" | tail -1)
+            local available_gb_after=$((available_kb_after / 1024 / 1024))
+            
+            if [ "$available_gb_after" -lt 1 ]; then
+                ERROR_EXIT "Extraction failed due to insufficient disk space. Only ${available_gb_after}GB available."
+            fi
+            return 1
+        fi
         [[ -s "$out_path" ]] && return 0
         rm -f "$out_path"
     fi
@@ -70,7 +95,7 @@ FETCH_FILE() {
    
     if echo "$file_list" | awk '{print $NF}' | grep -Fxq "$target_file.lz4"; then
         if 7z x "$container" "$target_file.lz4" -so 2>/dev/null \
-            | lz4 -d -c > "$out_path"; then
+            | lz4 -d -c > "$out_path" 2>/dev/null; then
             [[ -s "$out_path" ]] && return 0
         fi
         rm -f "$out_path"
@@ -84,10 +109,16 @@ FETCH_FILE() {
         local tmp_node
         tmp_node="$(mktemp "$out_dir/tmp_$(basename "$node").XXXXXX")"
 
-        7z x "$container" "$node" -so 2>/dev/null > "$tmp_node" || {
+        if ! 7z x "$container" "$node" -so 2>/dev/null > "$tmp_node"; then
             rm -f "$tmp_node"
             continue
-        }
+        fi
+        
+        # Check if tmp_node was created successfully
+        if [[ ! -s "$tmp_node" ]]; then
+            rm -f "$tmp_node"
+            continue
+        fi
 
         if FETCH_FILE "$tmp_node" "$target_file" "$out_dir" "$((depth + 1))"; then
             rm -f "$tmp_node"
