@@ -1,0 +1,78 @@
+name: Build ROM for y2q Device
+
+on:
+  workflow_dispatch:
+    inputs: 
+      device:
+        description: 'Device codename'
+        required: false
+        default: 'y2q'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git curl wget gnupg flex bison gperf build-essential \
+            zip zlib1g-dev libc6-dev libncurses5-dev x11-utils \
+            libx11-dev libreadline-dev libgl1-mesa-dev tofrodos \
+            python-is-python3 libxml2-utils xsltproc rsync ccache git-lfs
+            
+      - name: 📊 Check available disk space
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          
+      - name: 🧹 Free up disk space
+        run: |
+          echo "Removing unnecessary software..."
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune --all --force || true
+          echo "=== Disk space after cleanup ==="
+          df -h
+            
+      - name: Make build script executable
+        run: chmod +x build.sh
+          
+      - name: Build ROM using build.sh
+        run: ./build.sh --build "${{ github.event.inputs.device || 'y2q' }}"
+        timeout-minutes: 480
+        
+      - name:  Collect build artifacts
+        if: success()
+        run: |
+          BUILD_DATE=$(date +%Y%m%d_%H%M%S)
+          mkdir -p rom_artifacts
+          # Adjust path based on where your build. sh outputs files
+          if [ -d out/ ]; then
+            find out/ -name "*.zip" -type f -exec cp {} rom_artifacts/ \;
+            echo "Build artifacts collected successfully"
+          else
+            echo "No ROM artifacts found"
+            exit 1
+          fi
+          
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstroROM-${{ github.event.inputs.device || 'y2q' }}-${{ github.run_id }}
+          path: rom_artifacts/
+          retention-days: 30
+          
+      - name: Build failed notification
+        if: failure()
+        run: |
+          echo "❌ Build for ${{ github.event.inputs. device || 'y2q' }} device failed!"
+          echo "Check the logs above for more details"
+          exit 1
